@@ -27,6 +27,10 @@ const userSchema = new mongoose.Schema(
                 type: [String],
                 default: [],
             },
+            languages: {
+                type: [String],
+                default: [],
+            },
         },
     },
     {
