@@ -2,7 +2,76 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const User = require("../models/user.model");
 
+// -------------------------
+// Validation helpers
+// -------------------------
+
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Adjust this value if your assignment specifies a different minimum.
+const MIN_PASSWORD_LENGTH = 8;
+
+const isValidEmail = (email) => {
+    return (
+        typeof email === "string" &&
+        EMAIL_REGEX.test(email.trim())
+    );
+};
+
+const isValidPassword = (password) => {
+    return (
+        typeof password === "string" &&
+        password.length >= MIN_PASSWORD_LENGTH
+    );
+};
+
+/*
+ * Expected preferences shape:
+ *
+ * {
+ *   categories: ["technology", "sports"],
+ *   language: "en"
+ * }
+ *
+ * If your User model uses different preference fields,
+ * update this validator to match the model schema.
+ */
+const isValidPreferences = (preferences) => {
+    if (
+        !preferences ||
+        typeof preferences !== "object" ||
+        Array.isArray(preferences)
+    ) {
+        return false;
+    }
+
+    if (
+        preferences.categories !== undefined &&
+        (
+            !Array.isArray(preferences.categories) ||
+            !preferences.categories.every(
+                (category) => typeof category === "string"
+            )
+        )
+    ) {
+        return false;
+    }
+
+    if (
+        preferences.language !== undefined &&
+        typeof preferences.language !== "string"
+    ) {
+        return false;
+    }
+
+    return true;
+};
+
 const generateToken = (userId) => {
+    if (!process.env.JWT_SECRET) {
+        throw new Error("JWT_SECRET is not defined in environment variables");
+    }
+
     return jwt.sign(
         { userId },
         process.env.JWT_SECRET,
@@ -12,11 +81,13 @@ const generateToken = (userId) => {
     );
 };
 
+// -------------------------
 // REGISTER
+// -------------------------
+
 const register = async (req, res) => {
     try {
         const { name, email, password } = req.body;
-        console.log("Register request body:", req.body); // Log the request body for debugging
 
         if (!name || !email || !password) {
             return res.status(400).json({
@@ -24,7 +95,29 @@ const register = async (req, res) => {
             });
         }
 
-        const existingUser = await User.findOne({ email });
+        if (typeof name !== "string" || name.trim().length < 2) {
+            return res.status(400).json({
+                message: "Name must be at least 2 characters long",
+            });
+        }
+
+        const normalizedEmail = email.trim().toLowerCase();
+
+        if (!isValidEmail(normalizedEmail)) {
+            return res.status(400).json({
+                message: "Please provide a valid email address",
+            });
+        }
+
+        if (!isValidPassword(password)) {
+            return res.status(400).json({
+                message: `Password must be at least ${MIN_PASSWORD_LENGTH} characters long`,
+            });
+        }
+
+        const existingUser = await User.findOne({
+            email: normalizedEmail,
+        });
 
         if (existingUser) {
             return res.status(409).json({
@@ -35,14 +128,14 @@ const register = async (req, res) => {
         const hashedPassword = await bcrypt.hash(password, 10);
 
         const user = await User.create({
-            name,
-            email,
+            name: name.trim(),
+            email: normalizedEmail,
             password: hashedPassword,
         });
 
         const token = generateToken(user._id);
 
-        res.status(201).json({
+        return res.status(201).json({
             message: "User registered successfully",
             token,
             user: {
@@ -55,24 +148,43 @@ const register = async (req, res) => {
     } catch (error) {
         console.error("Register error:", error);
 
-        res.status(500).json({
+        return res.status(500).json({
             message: "Something went wrong",
         });
     }
 };
 
+// -------------------------
 // LOGIN
+// -------------------------
+
 const login = async (req, res) => {
     try {
         const { email, password } = req.body;
-         console.log("Login request body:", req.body); // Log the request body for debugging
+
         if (!email || !password) {
             return res.status(400).json({
                 message: "Email and password are required",
             });
         }
 
-        const user = await User.findOne({ email });
+        const normalizedEmail = email.trim().toLowerCase();
+
+        if (!isValidEmail(normalizedEmail)) {
+            return res.status(400).json({
+                message: "Please provide a valid email address",
+            });
+        }
+
+        if (typeof password !== "string") {
+            return res.status(400).json({
+                message: "Password must be a string",
+            });
+        }
+
+        const user = await User.findOne({
+            email: normalizedEmail,
+        });
 
         if (!user) {
             return res.status(401).json({
@@ -93,7 +205,7 @@ const login = async (req, res) => {
 
         const token = generateToken(user._id);
 
-        res.status(200).json({
+        return res.status(200).json({
             message: "Login successful",
             token,
             user: {
@@ -106,33 +218,45 @@ const login = async (req, res) => {
     } catch (error) {
         console.error("Login error:", error);
 
-        res.status(500).json({
+        return res.status(500).json({
             message: "Something went wrong",
         });
     }
 };
 
+// -------------------------
 // LOGOUT
+// -------------------------
+
 const logout = async (req, res) => {
     try {
-        res.status(200).json({
-            message: "Logout successful",
+       
+        return res.status(200).json({
+            message: "Logout successful. Please remove the JWT from the client.",
         });
     } catch (error) {
         console.error("Logout error:", error);
 
-        res.status(500).json({
+        return res.status(500).json({
             message: "Something went wrong",
         });
     }
 };
 
+// -------------------------
 // UPDATE USER
+// -------------------------
+
 const updateUser = async (req, res) => {
     try {
         const userId = req.user.userId;
 
-        const { name, email, password, preferences } = req.body;
+        const {
+            name,
+            email,
+            password,
+            preferences,
+        } = req.body;
 
         const user = await User.findById(userId);
 
@@ -142,13 +266,44 @@ const updateUser = async (req, res) => {
             });
         }
 
+        // -------------------------
+        // Validate name
+        // -------------------------
+
         if (name !== undefined) {
-            user.name = name;
+            if (
+                typeof name !== "string" ||
+                name.trim().length < 2
+            ) {
+                return res.status(400).json({
+                    message: "Name must be at least 2 characters long",
+                });
+            }
+
+            user.name = name.trim();
         }
 
+        // -------------------------
+        // Validate email
+        // -------------------------
+
         if (email !== undefined) {
+            if (typeof email !== "string") {
+                return res.status(400).json({
+                    message: "Email must be a string",
+                });
+            }
+
+            const normalizedEmail = email.trim().toLowerCase();
+
+            if (!isValidEmail(normalizedEmail)) {
+                return res.status(400).json({
+                    message: "Please provide a valid email address",
+                });
+            }
+
             const existingUser = await User.findOne({
-                email,
+                email: normalizedEmail,
                 _id: { $ne: userId },
             });
 
@@ -158,20 +313,41 @@ const updateUser = async (req, res) => {
                 });
             }
 
-            user.email = email;
+            user.email = normalizedEmail;
         }
 
+        // -------------------------
+        // Validate password
+        // -------------------------
+
         if (password !== undefined) {
+            if (!isValidPassword(password)) {
+                return res.status(400).json({
+                    message: `Password must be at least ${MIN_PASSWORD_LENGTH} characters long`,
+                });
+            }
+
             user.password = await bcrypt.hash(password, 10);
         }
 
+        // -------------------------
+        // Validate preferences
+        // -------------------------
+
         if (preferences !== undefined) {
+            if (!isValidPreferences(preferences)) {
+                return res.status(400).json({
+                    message:
+                        "Invalid preferences. Categories must be an array of strings and language must be a string.",
+                });
+            }
+
             user.preferences = preferences;
         }
 
         await user.save();
 
-        res.status(200).json({
+        return res.status(200).json({
             message: "User updated successfully",
             user: {
                 id: user._id,
@@ -183,13 +359,16 @@ const updateUser = async (req, res) => {
     } catch (error) {
         console.error("Update user error:", error);
 
-        res.status(500).json({
+        return res.status(500).json({
             message: "Something went wrong",
         });
     }
 };
 
+// -------------------------
 // DELETE USER
+// -------------------------
+
 const deleteUser = async (req, res) => {
     try {
         const userId = req.user.userId;
@@ -202,13 +381,13 @@ const deleteUser = async (req, res) => {
             });
         }
 
-        res.status(200).json({
+        return res.status(200).json({
             message: "User deleted successfully",
         });
     } catch (error) {
         console.error("Delete user error:", error);
 
-        res.status(500).json({
+        return res.status(500).json({
             message: "Something went wrong",
         });
     }
